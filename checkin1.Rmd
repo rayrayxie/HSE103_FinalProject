@@ -1,0 +1,197 @@
+---
+title: "CXCR2 expression and vitamin D in early pregnancy"
+subtitle: "HSE 103 · First project check-in"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: '2'
+  html_document:
+    toc: true
+    toc_depth: 2
+    code_folding: show
+    self_contained: true
+    theme: readable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5.3, dpi = 160)
+library(ggplot2)
+dir.create("figures", showWarnings = FALSE)
+```
+
+## Research question
+
+How does maternal whole-blood **CXCR2 expression** vary with baseline vitamin D concentration and subsequent preeclampsia status? This exploratory project focuses on immune signaling. CXCR2 encodes a chemokine receptor involved in immune-cell signaling; its biological role motivates the choice, rather than a genome-wide search for significant results [1].
+
+The continuous covariate is baseline 25-hydroxyvitamin D (ng/mL). The two categorical covariates are pregnancy outcome (normal pregnancy or preeclampsia) and vitamin D category (<30 or ≥30 ng/mL), derived from the continuous measurement. The cutoff follows the original study [2]; the labels describe study groups rather than universal diagnostic categories.
+
+## Data source and preparation
+
+The supplied GSE85307 files represent 157 participants in a nested case-control gene-expression study within VDAART: 110 normal pregnancies and 47 participants who subsequently developed preeclampsia [2,3]. These are whole-blood microarray expression measurements, not DNA genotypes. GEO documents RMA normalization on a log2 scale [4]. The supplied expression values are analyzed on their existing scale without another log transformation. The class file is a 500-probe subset, not the full transcriptome.
+
+All preparation below occurs in R directly from unchanged copies of the supplied CSVs. The expression columns and covariate rows must be matched by sample identifier, not position.
+
+```{r load-original-files}
+covariates <- read.csv("data/GSE85307_covar-1.csv", stringsAsFactors = FALSE,
+                       check.names = FALSE)
+expression <- read.csv("data/GSE85307_geneExpression.csv", row.names = 1,
+                       check.names = FALSE)
+gene_names <- read.csv("data/GSE85307_geneNames.csv", stringsAsFactors = FALSE)
+
+# Stop rather than silently duplicating or losing participants.
+stopifnot(!anyDuplicated(covariates$geoID),
+          !anyDuplicated(covariates$subjectID),
+          !anyDuplicated(colnames(expression)),
+          !anyDuplicated(rownames(expression)),
+          setequal(covariates$geoID, colnames(expression)))
+original_order_matches <- identical(covariates$geoID, colnames(expression))
+expression <- expression[, match(covariates$geoID, colnames(expression)), drop = FALSE]
+stopifnot(identical(colnames(expression), covariates$geoID))
+
+# Use the provided linker, retaining probe identifiers as identifiers.
+cxcr2_probe <- as.character(gene_names$PROBEID[gene_names$GENE == "CXCR2"])
+stopifnot(length(cxcr2_probe) == 1L, cxcr2_probe %in% rownames(expression))
+
+# Values are prefixed by descriptive strings such as '...: 22.4'.
+strip_prefix <- function(x) trimws(sub("^[^:]*:", "", x))
+vitamin_d <- as.numeric(strip_prefix(covariates$mat_vitD))
+outcome <- strip_prefix(covariates$preg_preeclampsia)
+stopifnot(all(is.finite(vitamin_d)),
+          all(outcome %in% c("Normal", "Preeclampsia")))
+
+analysis <- data.frame(
+  geoID = covariates$geoID,
+  CXCR2 = as.numeric(expression[cxcr2_probe, ]),
+  vitamin_d = vitamin_d,
+  outcome = factor(outcome, levels = c("Normal", "Preeclampsia"),
+                   labels = c("Normal pregnancy", "Preeclampsia")),
+  vitamin_d_group = factor(ifelse(vitamin_d < 30, "<30 ng/mL", "≥30 ng/mL"),
+                           levels = c("<30 ng/mL", "≥30 ng/mL"))
+)
+stopifnot(all(complete.cases(analysis)), all(is.finite(analysis$CXCR2)))
+knitr::kable(data.frame(
+  Check = c("Initial participants", "Final participants", "Excluded participants",
+            "Expression probes", "CXCR2 probe ID", "Original sample order matched"),
+  Result = c(nrow(covariates), nrow(analysis), 0, nrow(expression),
+             cxcr2_probe, original_order_matches)
+), caption = "Data alignment and completeness checks.")
+```
+
+All `r nrow(analysis)` participants are retained. There are no missing values in the selected analysis variables. Values that appear unusual are retained because no documented measurement error has been established.
+
+```{r group-counts}
+group_counts <- as.data.frame(table(analysis$outcome, analysis$vitamin_d_group))
+names(group_counts) <- c("Pregnancy outcome", "Vitamin D category", "Participants")
+knitr::kable(group_counts, caption = "Numbers of participants in each plotted subgroup.")
+```
+
+## Plot styling
+
+All three figures are made with ggplot2. The same categorical palette is used throughout; each figure is also saved as a PDF and a 300-dpi PNG. Captions distinguish descriptive patterns from causal conclusions.
+
+```{r theme}
+vitamin_colors <- c("<30 ng/mL" = "#0072B2", "≥30 ng/mL" = "#D55E00")
+project_theme <- theme_classic(base_size = 12) +
+  theme(plot.title = element_text(face = "bold", size = 15),
+        plot.subtitle = element_text(size = 11, color = "grey30"),
+        legend.position = "bottom", plot.margin = margin(12, 16, 10, 10))
+export_plot <- function(plot, name) {
+  ggsave(file.path("figures", paste0(name, ".pdf")), plot,
+         width = 8, height = 5.3, device = grDevices::cairo_pdf)
+  ggsave(file.path("figures", paste0(name, ".png")), plot,
+         width = 8, height = 5.3, dpi = 300)
+}
+```
+
+## Figure 1 · Expression distribution
+
+```{r histogram, fig.cap="Figure 1. Distribution of CXCR2 expression across 157 participants. Histogram bins have a width of 0.10 log2 expression units. No observations were excluded."}
+histogram <- ggplot(analysis, aes(x = CXCR2)) +
+  geom_histogram(binwidth = 0.10, boundary = 0, fill = "#0072B2",
+                 color = "white", linewidth = 0.4) +
+  labs(title = "Distribution of CXCR2 expression",
+       subtitle = "Maternal whole blood · 157 participants",
+       x = "CXCR2 expression (log2 RMA signal)", y = "Number of participants") +
+  project_theme
+export_plot(histogram, "01_cxcr2_histogram")
+knitr::include_graphics("figures/01_cxcr2_histogram.png")
+```
+
+CXCR2 expression ranges from `r sprintf("%.2f", min(analysis$CXCR2))` to `r sprintf("%.2f", max(analysis$CXCR2))` log2 units, with median `r sprintf("%.2f", median(analysis$CXCR2))` (Figure 1). The plot describes variation within this gene; it does not establish differences between clinical groups.
+
+## Figure 2 · Vitamin D and expression
+
+```{r scatterplot, fig.cap="Figure 2. Baseline vitamin D concentration and CXCR2 expression. Each point represents one participant. The line is an unadjusted ordinary least-squares fit; the shaded band is its 95% confidence interval for the mean response, not a prediction interval."}
+scatterplot <- ggplot(analysis, aes(x = vitamin_d, y = CXCR2)) +
+  geom_point(color = "#0072B2", size = 2, alpha = 0.65) +
+  geom_smooth(method = "lm", formula = y ~ x, color = "#222222",
+              fill = "#9DA9B5", linewidth = 0.8) +
+  labs(title = "CXCR2 expression and baseline vitamin D",
+       subtitle = "Exploratory, unadjusted relationship",
+       x = "Baseline 25-hydroxyvitamin D (ng/mL)",
+       y = "CXCR2 expression (log2 RMA signal)") + project_theme
+export_plot(scatterplot, "02_cxcr2_vitamin_d")
+knitr::include_graphics("figures/02_cxcr2_vitamin_d.png")
+```
+
+The sample Pearson correlation is `r sprintf("%.2f", cor(analysis$vitamin_d, analysis$CXCR2))`, indicating a positive unadjusted linear relationship (Figure 2). This descriptive relationship does not show that vitamin D changes CXCR2 expression. Batch, cell composition, and other participant characteristics could contribute.
+
+## Figure 3 · Expression by both categorical variables
+
+```{r grouped-boxplot, fig.cap="Figure 3. CXCR2 expression by pregnancy outcome and baseline vitamin D category. Boxes show the interquartile range, with a median line; whiskers extend to the most extreme observations within 1.5 interquartile ranges. All individual observations are overlaid with horizontal jitter. Subgroup counts appear above the boxes. The preeclampsia/≥30 ng/mL group contains only six participants."}
+counts <- aggregate(CXCR2 ~ outcome + vitamin_d_group, analysis, length)
+counts$label <- paste0("n = ", counts$CXCR2)
+counts$label_y <- max(analysis$CXCR2) + 0.10
+boxplot <- ggplot(analysis, aes(x = outcome, y = CXCR2, fill = vitamin_d_group)) +
+  geom_boxplot(position = position_dodge(width = 0.75), width = 0.6,
+               outlier.shape = NA, alpha = 0.65, linewidth = 0.5) +
+  geom_point(aes(group = vitamin_d_group), shape = 21, size = 1.6,
+              alpha = 0.65, stroke = 0.2,
+              position = position_jitterdodge(jitter.width = 0.15,
+                                            dodge.width = 0.75, seed = 103)) +
+  geom_text(data = counts, aes(y = label_y, label = label, group = vitamin_d_group),
+             position = position_dodge(width = 0.75), size = 3.5) +
+  scale_fill_manual(values = vitamin_colors, drop = FALSE) +
+  scale_y_continuous(expand = expansion(mult = c(0.04, 0.08))) +
+  labs(title = "CXCR2 expression across pregnancy and vitamin D groups",
+       subtitle = "All observations shown; subgroup sizes are unequal",
+       x = NULL, y = "CXCR2 expression (log2 RMA signal)",
+       fill = "Baseline vitamin D") + project_theme
+export_plot(boxplot, "03_cxcr2_grouped_boxplot")
+knitr::include_graphics("figures/03_cxcr2_grouped_boxplot.png")
+```
+
+```{r subgroup-medians}
+medians <- aggregate(CXCR2 ~ outcome + vitamin_d_group, analysis, median)
+knitr::kable(medians, digits = 3,
+             col.names = c("Pregnancy outcome", "Vitamin D category", "Median CXCR2"),
+             caption = "Descriptive subgroup medians supporting interpretation of Figure 3.")
+```
+
+Group distributions overlap (Figure 3). Differences in medians should be interpreted descriptively, particularly for the six participants with preeclampsia and vitamin D ≥30 ng/mL. These plots do not demonstrate independent effects or an interaction between pregnancy outcome and vitamin D.
+
+## Interpretation and next steps
+
+This first check-in describes one gene and the three required covariates. The sample is a selected pregnancy cohort, so its case fraction is not a population estimate of preeclampsia risk. Expression differences can also reflect blood-cell composition. The eight recorded microarray batches should be examined in any expanded analysis; the figures here are not batch-adjusted. No causal, diagnostic, or predictive claim is made.
+
+For later submissions, CYP24A1 and PTX3 are biologically motivated additional genes available in the supplied data. An exploratory ten-gene clustering analysis could introduce unsupervised machine learning. Clinical labels would be withheld from the clustering inputs. This extension is planned, not performed in the first check-in.
+
+## References and software
+
+1. NCBI Gene. *CXCR2, C-X-C motif chemokine receptor 2 (Homo sapiens)*. https://www.ncbi.nlm.nih.gov/gene/3579
+2. Mirzakhani H, et al. Early pregnancy vitamin D status and risk of preeclampsia. *Journal of Clinical Investigation*. 2016;126(12):4702–4715. https://doi.org/10.1172/JCI89031
+3. Gene Expression Omnibus. GSE85307. https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE85307
+4. Gene Expression Omnibus. GSM2264465, data-processing description. https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM2264465
+
+The analysis and plots use R and ggplot2; knitr and rmarkdown generate this report. Exact citations and installed versions follow.
+
+```{r software-citations, results='asis'}
+for (pkg in c("base", "ggplot2", "knitr", "rmarkdown")) {
+  cat(paste(format(citation(pkg), style = "text"), collapse = "\n"), "\n\n")
+}
+```
+
+```{r session-info}
+sessionInfo()
+```
