@@ -1,0 +1,126 @@
+---
+title: "HSE 103 Final Project - Gene Expression"
+output: pdf_document
+---
+
+## Research question
+
+How does gene expression for CXCR2, CYP24A1, and PTX3 vary with maternal vitamin D concentration and pregnancy outcome?
+
+The continuous covariate is maternal vitamin D (ng/mL). The two categorical variables are pregnancy outcome and vitamin D group (<30 versus >=30 ng/mL).
+
+## Import and prepare the original data
+
+```{r prepare-data, message=FALSE}
+# Read the three course CSV files without editing them.
+# These files need to be in the same folder as this R Markdown file.
+library(tidyverse)
+
+covariates <- read.csv("GSE85307_covar-1.csv")
+expression <- read.csv("GSE85307_geneExpression.csv", row.names = 1)
+linker <- read.csv("GSE85307_geneNames.csv")
+
+# The expression file has genes in rows and samples in columns.
+# Transpose it so sample IDs become rows and probe IDs become columns.
+expression <- t(expression)
+
+# Inspect sample IDs before combining the datasets.
+# In the RStudio Console, compare these IDs if you need to check ordering:
+# head(covariates$geoID)
+# head(rownames(expression))
+
+# Clinical columns contain a description before the colon.
+# Separate the description from each recorded value.
+covariates <- separate(covariates, mat_vitD,
+                       into = c(NA, "vitamin_d"), sep = ": ")
+covariates <- separate(covariates, preg_preeclampsia,
+                       into = c(NA, "outcome"), sep = ": ")
+
+# Set the types used in the plots.
+covariates$vitamin_d <- as.numeric(covariates$vitamin_d)
+covariates$outcome <- factor(covariates$outcome,
+                             levels = c("Normal", "Preeclampsia"))
+covariates$vitamin_d_group <- factor(
+  ifelse(covariates$vitamin_d < 30, "Below 30", "30 or higher"),
+  levels = c("Below 30", "30 or higher"))
+
+# Start one data frame with one row per clinical sample.
+analysis <- data.frame(
+  geoID = covariates$geoID,
+  vitamin_d = covariates$vitamin_d,
+  outcome = covariates$outcome,
+  vitamin_d_group = covariates$vitamin_d_group
+)
+
+# Find each gene's probe ID in the linker file.
+# Select expression values using the sample IDs, not original row positions.
+gene_names <- c("CXCR2", "CYP24A1", "PTX3")
+for (gene in gene_names) {
+  probe <- as.character(linker$PROBEID[linker$GENE == gene])
+  analysis[, gene] <- expression[covariates$geoID, probe]
+}
+
+# Inspect the analysis data frame before plotting.
+# In the RStudio Console, inspect the prepared data before plotting:
+# head(analysis)
+```
+
+## Function to generate three plots for any selected gene
+
+The function takes two inputs: a data frame and a vector of one or more gene names. It uses a `for` loop to make a histogram, scatterplot, and grouped boxplot for each gene.
+
+```{r plotting-function}
+make_gene_plots <- function(data, gene_names) {
+  # Repeat the same three plot types for each selected gene.
+  for (gene in gene_names) {
+
+    # Put the selected gene expression and covariates into one plot data frame.
+    plotData <- data.frame(
+      Expression = data[, gene],
+      VitaminD = data$vitamin_d,
+      Outcome = data$outcome,
+      VitaminDGroup = data$vitamin_d_group
+    )
+
+    # Histogram: distribution of expression for this gene.
+    histogram <- ggplot(plotData, aes(x = Expression)) +
+      geom_histogram(binwidth = 0.10, fill = "steelblue", color = "white") +
+      labs(title = paste(gene, "expression distribution"),
+           x = "Gene expression (log2 signal)",
+           y = "Number of participants") +
+      theme_classic()
+
+    # Scatterplot: vitamin D on the x-axis and expression on the y-axis.
+    scatterplot <- ggplot(plotData, aes(x = VitaminD, y = Expression)) +
+      geom_point(color = "steelblue", alpha = 0.7) +
+      geom_smooth(method = loess) +
+      labs(title = paste(gene, "expression and maternal vitamin D"),
+           x = "Maternal vitamin D (ng/mL)",
+           y = "Gene expression (log2 signal)") +
+      theme_classic()
+
+    # Boxplot: pregnancy outcome separated by the two vitamin D groups.
+    boxplot <- ggplot(plotData, aes(x = Outcome, y = Expression,
+                                    fill = VitaminDGroup)) +
+      geom_boxplot(position = position_dodge(0.9)) +
+      scale_fill_manual(values = c("steelblue", "orange")) +
+      labs(title = paste(gene, "expression by pregnancy outcome"),
+           x = "Pregnancy outcome",
+           y = "Gene expression (log2 signal)",
+           fill = "Vitamin D (ng/mL)") +
+      theme_classic()
+
+    # print() displays plots made inside a for loop in the knitted report.
+    print(histogram)
+    print(scatterplot)
+    print(boxplot)
+  }
+}
+```
+
+## Nine plots for three genes
+
+```{r nine-plots, fig.width=6.5, fig.height=4.5}
+# Three genes, each with one histogram, one scatterplot, and one boxplot.
+make_gene_plots(analysis, gene_names)
+```
