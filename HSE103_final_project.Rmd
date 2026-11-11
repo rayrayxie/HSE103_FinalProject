@@ -5,7 +5,7 @@ output: pdf_document
 
 ## Research question
 
-How does gene expression for CXCR2, CYP24A1, and PTX3 vary with maternal vitamin D concentration and pregnancy outcome?
+How does gene expression for *CXCR2*, *CYP24A1*, and *PTX3* vary with maternal vitamin D concentration and pregnancy outcome?
 
 The continuous covariate is maternal vitamin D (ng/mL). The two categorical variables are pregnancy outcome and vitamin D group (<30 versus >=30 ng/mL).
 
@@ -43,13 +43,24 @@ covariates$outcome <- factor(covariates$outcome,
 covariates$vitamin_d_group <- factor(
   ifelse(covariates$vitamin_d < 30, "Below 30", "30 or higher"),
   levels = c("Below 30", "30 or higher"))
+# Clean maternal age and BMI
+covariates <- separate(covariates, mat_age_yrs,
+                       into = c(NA, "age_years"), sep = ": ")
+
+covariates <- separate(covariates, mat_BMI,
+                       into = c(NA, "bmi"), sep = ": ")
+
+covariates$age_years <- as.numeric(covariates$age_years)
+covariates$bmi <- as.numeric(covariates$bmi)
 
 # Start one data frame with one row per clinical sample.
 analysis <- data.frame(
   geoID = covariates$geoID,
   vitamin_d = covariates$vitamin_d,
   outcome = covariates$outcome,
-  vitamin_d_group = covariates$vitamin_d_group
+  vitamin_d_group = covariates$vitamin_d_group,
+  age_years = covariates$age_years,
+  bmi = covariates$bmi
 )
 
 # Find each gene's probe ID in the linker file.
@@ -85,30 +96,42 @@ make_gene_plots <- function(data, gene_names) {
     # Histogram: distribution of expression for this gene.
     histogram <- ggplot(plotData, aes(x = Expression)) +
       geom_histogram(binwidth = 0.10, fill = "steelblue", color = "white") +
-      labs(title = paste(gene, "expression distribution"),
-           x = "Gene expression (log2 signal)",
-           y = "Number of participants") +
-      theme_classic()
+     labs(
+  title = gene,
+  subtitle = "Expression distribution",
+  x = "Gene expression (log2 signal)",
+  y = "Number of participants"
+) +
+theme_classic() +
+theme(plot.title = element_text(face = "italic"))
 
     # Scatterplot: vitamin D on the x-axis and expression on the y-axis.
     scatterplot <- ggplot(plotData, aes(x = VitaminD, y = Expression)) +
       geom_point(color = "steelblue", alpha = 0.7) +
       geom_smooth(method = loess) +
-      labs(title = paste(gene, "expression and maternal vitamin D"),
-           x = "Maternal vitamin D (ng/mL)",
-           y = "Gene expression (log2 signal)") +
-      theme_classic()
+     labs(
+  title = gene,
+  subtitle = "Expression and maternal vitamin D",
+  x = "Maternal vitamin D (ng/mL)",
+  y = "Gene expression (log2 signal)"
+) +
+theme_classic() +
+theme(plot.title = element_text(face = "italic"))
 
     # Boxplot: pregnancy outcome separated by the two vitamin D groups.
     boxplot <- ggplot(plotData, aes(x = Outcome, y = Expression,
                                     fill = VitaminDGroup)) +
       geom_boxplot(position = position_dodge(0.9)) +
       scale_fill_manual(values = c("steelblue", "orange")) +
-      labs(title = paste(gene, "expression by pregnancy outcome"),
-           x = "Pregnancy outcome",
-           y = "Gene expression (log2 signal)",
-           fill = "Vitamin D (ng/mL)") +
-      theme_classic()
+     labs(
+  title = gene,
+  subtitle = "Expression by pregnancy outcome",
+  x = "Pregnancy outcome",
+  y = "Gene expression (log2 signal)",
+  fill = "Vitamin D group"
+) +
+theme_classic() +
+theme(plot.title = element_text(face = "italic"))
 
     # print() displays plots made inside a for loop in the knitted report.
     print(histogram)
@@ -124,3 +147,179 @@ make_gene_plots <- function(data, gene_names) {
 # Three genes, each with one histogram, one scatterplot, and one boxplot.
 make_gene_plots(analysis, gene_names)
 ```
+## Table 1: Summary Statistics
+
+```{r table-one}
+# Separate participants by pregnancy outcome
+normalData <- analysis[analysis$outcome == "Normal", ]
+preeclampsiaData <- analysis[analysis$outcome == "Preeclampsia", ]
+
+# Check the number of participants
+nrow(normalData)
+nrow(preeclampsiaData)
+# Calculate mean and standard deviation of maternal age
+mean(normalData$age_years)
+sd(normalData$age_years)
+
+mean(preeclampsiaData$age_years)
+sd(preeclampsiaData$age_years)
+# Calculate mean and standard deviation of maternal BMI
+mean(normalData$bmi)
+sd(normalData$bmi)
+
+mean(preeclampsiaData$bmi)
+sd(preeclampsiaData$bmi)
+
+# Calculate mean and standard deviation of maternal vitamin D
+mean(normalData$vitamin_d)
+sd(normalData$vitamin_d)
+
+mean(preeclampsiaData$vitamin_d)
+sd(preeclampsiaData$vitamin_d)
+```
+### Formatted Summary Statistics Table
+
+```{r formatted-table}
+# Format continuous variables as mean (SD)
+mean_sd <- function(x) {
+  paste0(round(mean(x), 2), " (", round(sd(x), 2), ")")
+}
+
+# Format categorical variables as count (percentage)
+count_pct <- function(data, group) {
+  n <- sum(data$vitamin_d_group == group)
+  paste0(n, " (", round(n / nrow(data) * 100, 1), "%)")
+}
+
+# Build Table 1
+table1 <- data.frame(
+  Variable = c("Maternal age (years)",
+               "Maternal BMI (kg/m2)",
+               "Vitamin D (ng/mL)",
+               "Vitamin D below 30",
+               "Vitamin D 30 or higher"),
+
+  Normal = c(mean_sd(normalData$age_years),
+             mean_sd(normalData$bmi),
+             mean_sd(normalData$vitamin_d),
+             count_pct(normalData, "Below 30"),
+             count_pct(normalData, "30 or higher")),
+
+  Preeclampsia = c(mean_sd(preeclampsiaData$age_years),
+                   mean_sd(preeclampsiaData$bmi),
+                   mean_sd(preeclampsiaData$vitamin_d),
+                   count_pct(preeclampsiaData, "Below 30"),
+                   count_pct(preeclampsiaData, "30 or higher"))
+)
+
+knitr::kable(table1,
+             caption = "Maternal characteristics by pregnancy outcome")
+```
+
+## 10-Gene Heatmap
+
+```{r heatmap-data}
+# Load the heatmap package
+library(pheatmap)
+
+# Select 10 genes from the dataset
+heatmap_genes <- c(
+  "CXCR2", "CYP24A1", "PTX3",
+  "SOCS5", "SIRT3", "HSPA8",
+  "CNR1", "TRIM24", "SLC1A5", "RBL2"
+)
+
+# Create an empty matrix for gene expression
+heatmapData <- matrix(
+  nrow = length(heatmap_genes),
+  ncol = nrow(analysis)
+)
+
+# Assign gene names and sample IDs
+rownames(heatmapData) <- heatmap_genes
+colnames(heatmapData) <- analysis$geoID
+
+# Add expression values for each gene
+for (gene in heatmap_genes) {
+  probe <- as.character(linker$PROBEID[linker$GENE == gene])
+  heatmapData[gene, ] <- expression[analysis$geoID, probe]
+}
+```
+
+## Heatmap Tracking Bars
+
+```{r heatmap-annotations}
+# Create two categorical tracking bars
+annotationData <- data.frame(
+  row.names = analysis$geoID,
+  PregnancyOutcome = analysis$outcome,
+  VitaminDGroup = analysis$vitamin_d_group
+)
+```
+
+## Clustered 10-Gene Heatmap
+
+```{r clustered-heatmap, fig.width=10, fig.height=6}
+# Generate a heatmap with hierarchical clustering
+
+pheatmap(
+  heatmapData,
+  clustering_distance_cols = "euclidean",
+  clustering_distance_rows = "euclidean",
+  annotation_col = annotationData,
+  labels_row = expression(
+    italic(CXCR2),
+    italic(CYP24A1),
+    italic(PTX3),
+    italic(SOCS5),
+    italic(SIRT3),
+    italic(HSPA8),
+    italic(CNR1),
+    italic(TRIM24),
+    italic(SLC1A5),
+    italic(RBL2)
+  ),
+  show_colnames = FALSE
+)
+```
+
+## Additional Plot: Gene Expression Differences
+
+```{r lollipop-data}
+# Identify participants in each pregnancy group
+normal_ids <- analysis$geoID[analysis$outcome == "Normal"]
+preeclampsia_ids <- analysis$geoID[analysis$outcome == "Preeclampsia"]
+
+# Prepare a table for the mean differences
+gene_diff <- data.frame(
+  Gene = heatmap_genes,
+  Difference = NA
+)
+
+# Calculate expression differences for each gene
+for (gene in heatmap_genes) {
+  gene_diff[gene_diff$Gene == gene, "Difference"] <-
+    mean(heatmapData[gene, preeclampsia_ids]) -
+    mean(heatmapData[gene, normal_ids])
+}
+```
+
+## Lollipop Plot
+
+```{r lollipop-plot, fig.width=8, fig.height=5}
+# Compare mean gene expression between pregnancy outcomes
+ggplot(gene_diff, aes(x = Difference, y = Gene)) +
+  geom_segment(aes(x = 0, xend = Difference,
+                   y = Gene, yend = Gene),
+               color = "steelblue", linewidth = 0.7) +
+  geom_point(color = "steelblue", size = 3) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  labs(
+    title = "Gene expression differences by pregnancy outcome",
+    x = "Mean difference: Preeclampsia - Normal (log2 signal)",
+    y = "Gene"
+  ) +
+  theme_classic() +
+  theme(axis.text.y = element_text(face = "italic"))
+```
+
